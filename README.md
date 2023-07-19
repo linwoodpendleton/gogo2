@@ -9,8 +9,8 @@ iptables -N NFQUEUE_CHAIN
   
 iptables -A NFQUEUE_CHAIN -p tcp --sport 80 -j NFQUEUE --queue-num 0  
 iptables -A NFQUEUE_CHAIN -p tcp --sport 443 -j NFQUEUE --queue-num 0  
-sudo iptables -I INPUT 1 -j NFQUEUE_CHAIN  
-sudo iptables -I OUTPUT 1 -j NFQUEUE_CHAIN  
+iptables -I INPUT 1 -j NFQUEUE_CHAIN  
+iptables -I OUTPUT 1 -j NFQUEUE_CHAIN  
 ./test  
 
 
