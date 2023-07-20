@@ -13,7 +13,9 @@ iptables -I OUTPUT 1 -j NFQUEUE_CHAIN
 
 
 apt-get install libnetfilter-queue-dev  
+
 apt-get install libpcap-dev libuv1-dev
+
 apt-get install libglib2.0-dev
 gcc test.c -o test -lpcap -lnetfilter_queue -luv $(pkg-config --cflags --libs glib-2.0)
 
