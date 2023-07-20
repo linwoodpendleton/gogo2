@@ -22,4 +22,5 @@ gcc test.c -o test -lpcap -lnetfilter_queue -luv $(pkg-config --cflags --libs gl
 ./test -t 600 -u 86400 -w /home/whitelist.txt
 
 ipset create blockip hash:ip
+
 iptables -I INPUT -m set --match-set blockip src -j DROP
