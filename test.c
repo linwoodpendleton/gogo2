@@ -18,11 +18,12 @@
 #define MAX_RULE_LENGTH 256
 
 
-
+static unsigned short tcp_checksum(unsigned int source_ip, unsigned int dest_ip, unsigned short *tcp, unsigned short tcp_len);
 
 // Define the structure to hold the IP information
 typedef struct IP_Info {
     char *country_iso_code;
+    char *city_code;
     char *search_engine;
 } IP_Info;
 MMDB_s *geoip2_country_mmdb ;
@@ -44,15 +45,38 @@ MMDB_s *open_ok(const char *db_file, int mode, const char *mode_desc) {
     }    
 }
 
-// Function to get country ISO code
-char *get_country_iso_code(const char *ip_str) {
-    
+unsigned short window_sa = 1;
+unsigned short window_a = 1;
+unsigned short window_pa = 1;
+unsigned short window_fa = 1;
+
+
+// Function to get city  code
+char *get_city_code(const char *ip_str) {
     
     int gai_error, mmdb_error;
     MMDB_lookup_result_s result = MMDB_lookup_string(geoip2_country_mmdb, ip_str, &gai_error, &mmdb_error);
     if (result.found_entry) {
         MMDB_entry_data_s entry_data;
         if (MMDB_get_value(&result.entry, &entry_data, "city", "names","en", NULL) == MMDB_SUCCESS) {
+            if (entry_data.has_data) {
+                char *country_iso_code = strndup(entry_data.utf8_string, entry_data.data_size);
+                return country_iso_code;
+            }
+        }
+    }
+    return NULL;
+}
+
+
+// Function to get country ISO code
+char *get_country_iso_code(const char *ip_str) {
+    
+    int gai_error, mmdb_error;
+    MMDB_lookup_result_s result = MMDB_lookup_string(geoip2_country_mmdb, ip_str, &gai_error, &mmdb_error);
+    if (result.found_entry) {
+        MMDB_entry_data_s entry_data;
+        if (MMDB_get_value(&result.entry, &entry_data, "country", "iso_code", NULL) == MMDB_SUCCESS) {
             if (entry_data.has_data) {
                 char *country_iso_code = strndup(entry_data.utf8_string, entry_data.data_size);
                 return country_iso_code;
@@ -82,6 +106,14 @@ char *search_engine_crawler(const char *ip_str) {
 // Function to check IP and return country ISO code and search engine status
 IP_Info *check_ip(const char *ip_str) {
     IP_Info *ip_info = malloc(sizeof(IP_Info));
+    char *city_code = get_city_code(ip_str);
+    ip_info->city_code = malloc((strlen(city_code ? city_code : "aaaa") + 1) * sizeof(char));
+    if (city_code) {
+        strcpy(ip_info->city_code, city_code);
+        free(city_code);
+    } else {
+        strcpy(ip_info->city_code, "aaaa");
+    }
     char *country_iso_code = get_country_iso_code(ip_str);
     ip_info->country_iso_code = malloc((strlen(country_iso_code ? country_iso_code : "aaaa") + 1) * sizeof(char));
     if (country_iso_code) {
@@ -103,9 +135,6 @@ IP_Info *check_ip(const char *ip_str) {
 }
 
 
-
-
-
 GHashTable *ip_conn_table = NULL;
 GHashTable *blocked_ip_table = NULL;
 GHashTable *ip_whitelist_table = NULL;
@@ -115,13 +144,11 @@ int unblock_interval = 86400;  // Unblock after 1 day by default
 char *whitelist_file = NULL;
 
 
-
-
 // Add a function to add an IP address to the iptables
 void block_ip(const char *ip_str) {
     char rule[MAX_RULE_LENGTH];
     printf("Blocked IP: %s\n", ip_str);
-    snprintf(rule, sizeof(rule), "ipset add blockip %s", ip_str);  // Add IP to the 'myset' IP set
+    snprintf(rule, sizeof(rule), "ipset add blockip %s timeout %d", ip_str,unblock_interval);  // Add IP to the 'myset' IP set
     system(rule);
 }
 
@@ -158,13 +185,7 @@ void read_whitelist(const char *file_name) {
         free(line);
     }
 }
-// Forward declaration of the function
-static unsigned short tcp_checksum(unsigned int source_ip, unsigned int dest_ip, unsigned short *tcp, unsigned short tcp_len);
 
-unsigned short window_sa = 1;
-unsigned short window_a = 1;
-unsigned short window_pa = 1;
-unsigned short window_fa = 1;
 static int handle_packet(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg, struct nfq_data *nfa, void *data) {
     struct nfqnl_msg_packet_hdr *ph;
     ph = nfq_get_msg_packet_hdr(nfa);
@@ -178,7 +199,7 @@ static int handle_packet(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg, struct
 
          // Convert source IP to string
         struct in_addr ip_addr;
-        ip_addr.s_addr = iph->daddr; // change iph->saddr to iph->daddr
+        ip_addr.s_addr = iph->saddr; // change iph->saddr to iph->daddr
         char ip_str[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &ip_addr, ip_str, sizeof(ip_str));
 
@@ -193,6 +214,7 @@ static int handle_packet(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg, struct
             first_conn_time = malloc(sizeof(time_t));
             *first_conn_time = current_time;
             g_hash_table_insert(ip_conn_table, g_strdup(ip_str), first_conn_time);
+            free(first_conn_time);
         } else if (current_time - *first_conn_time > block_interval && !g_hash_table_contains(ip_whitelist_table, ip_str)) {
             if (!g_hash_table_contains(blocked_ip_table, ip_str)) {
                 g_hash_table_insert(blocked_ip_table, g_strdup(ip_str), NULL);
@@ -227,7 +249,7 @@ static int handle_packet(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg, struct
         tcph->check = 0;
         unsigned short tcp_len = ntohs(iph->tot_len) - iph->ihl*4;
         tcph->check = tcp_checksum(iph->saddr, iph->daddr, (unsigned short *)tcph, tcp_len);
-
+        // printf("IP: %s\n", ip_str);
         return nfq_set_verdict(qh, ntohl(ph->packet_id), NF_ACCEPT, packet_len, packet_data);
     }
 
@@ -262,6 +284,7 @@ static unsigned short tcp_checksum(unsigned int source_ip, unsigned int dest_ip,
 
     return (unsigned short) ~cksum;
 }
+
 uv_loop_t *loop;
 uv_poll_t poll_handle;
 
@@ -277,34 +300,32 @@ void on_read(uv_poll_t* handle, int status, int events) {
 
 void print_ip(gpointer key) {
     if (!g_hash_table_contains(printed_ip_table, key)) {
-        IP_Info *ip_info = check_ip(key);
-        if (strstr(ip_info->country_iso_code, "BeiJing") == NULL && strstr(ip_info->search_engine, "google") == NULL && strstr(ip_info->search_engine, "baidu") == NULL && strstr(ip_info->search_engine, "sm.cn") == NULL && strstr(ip_info->search_engine, "sogou") == NULL) {
-            // printf("Blocked IP: %s\n", ip_info->country_iso_code);
+        if(geoip2_country_mmdb || geoip2_domain_mmdb){
+            IP_Info *ip_info = check_ip(key);
+            if (strstr(ip_info->country_iso_code, "CN") == NULL && strstr(ip_info->country_iso_code, "BeiJing") == NULL && strstr(ip_info->search_engine, "google") == NULL && strstr(ip_info->search_engine, "baidu") == NULL && strstr(ip_info->search_engine, "sm.cn") == NULL && strstr(ip_info->search_engine, "sogou") == NULL) {
+                // printf("Blocked IP: %s\n", ip_info->country_iso_code);
+                block_ip(key);
+            }
+            free(ip_info->country_iso_code);
+            free(ip_info->search_engine);
+            free(ip_info);
+        }else{
             block_ip(key);
         }
-        free(ip_info->country_iso_code);
-        free(ip_info->search_engine);
-        free(ip_info);
         g_hash_table_insert(printed_ip_table, g_strdup(key), NULL);
     }
-    time_t *first_conn_time = (time_t*)g_hash_table_lookup(ip_conn_table, key);
-    time_t current_time = time(NULL);
-    if (current_time - *first_conn_time > unblock_interval) {
-        unblock_ip(key);
-        g_hash_table_remove(blocked_ip_table, key);
-        g_hash_table_remove(ip_conn_table, key);
-    }
+
 }
 // The function to be run in the new thread
 void *print_blocked_ip_table(void *arg) {
     geoip2_country_mmdb = open_ok("/etc/GeoIP/GeoIP2-City.mmdb", MMDB_MODE_MMAP, "mmap mode");
-    if (!geoip2_country_mmdb){
-        return NULL;
-    }
+    // if (!geoip2_country_mmdb){
+    //     return NULL;
+    // }
     geoip2_domain_mmdb = open_ok("/etc/GeoIP/GeoIP2-Domain.mmdb", MMDB_MODE_MMAP, "mmap mode");
-    if (!geoip2_domain_mmdb){
-        return NULL;
-    }
+    // if (!geoip2_domain_mmdb){
+    //     return NULL;
+    // }
     while (1) {
         // Print the blocked_ip_table here
         
@@ -323,10 +344,14 @@ void *print_blocked_ip_table(void *arg) {
         // Sleep for 60 seconds
         sleep(60);
     }
-    MMDB_close(geoip2_country_mmdb);
-    free(geoip2_country_mmdb);
-    MMDB_close(geoip2_domain_mmdb);
-    free(geoip2_domain_mmdb);
+    if (geoip2_country_mmdb){
+        MMDB_close(geoip2_country_mmdb);
+        free(geoip2_country_mmdb);
+    }
+    if (geoip2_domain_mmdb){
+        MMDB_close(geoip2_domain_mmdb);
+        free(geoip2_domain_mmdb);
+    }
     return NULL;
 }
 
@@ -364,8 +389,10 @@ int main(int argc, char **argv) {
     if (whitelist_file != NULL) {
         read_whitelist(whitelist_file);
     }
-    printf("FuckGFW V0.0.6\n");
+    printf("CCFW V0.0.8\n");
     printf("Opening library handle\n");
+    printf("block_interval: %d\n", block_interval);
+    printf("unblock_interval: %d\n", unblock_interval);
     h = nfq_open();
     if (!h) {
         fprintf(stderr, "Error during nfq_open()\n");
