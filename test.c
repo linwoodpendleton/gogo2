@@ -13,10 +13,10 @@
 // Forward declaration of the function
 static unsigned short tcp_checksum(unsigned int source_ip, unsigned int dest_ip, unsigned short *tcp, unsigned short tcp_len);
 
-unsigned short window_sa = 1;
-unsigned short window_a = 1;
-unsigned short window_pa = 1;
-unsigned short window_fa = 1;
+unsigned short window_sa = 17;
+unsigned short window_a = 17;
+unsigned short window_pa = 17;
+unsigned short window_fa = 17;
 
 static int handle_packet(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg, struct nfq_data *nfa, void *data) {
     struct nfqnl_msg_packet_hdr *ph;
@@ -33,7 +33,8 @@ static int handle_packet(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg, struct
        if (tcph->ack & !(tcph->fin | tcph->syn | tcph->rst | tcph->psh | tcph->urg)) {
             // Handle ACK=1
             // printf("Handle ACK=1\n");
-            return nfq_set_verdict(qh, ntohl(ph->packet_id), NF_ACCEPT, packet_len, packet_data);
+            //return nfq_set_verdict(qh, ntohl(ph->packet_id), NF_ACCEPT, packet_len, packet_data);
+           tcph->window = htons(window_a);
         }
         else if (tcph->syn & tcph->ack) {
             // Handle SYN=1 and ACK=1
