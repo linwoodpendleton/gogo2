@@ -5,12 +5,8 @@ apt-get install libpcap-dev libuv1-dev
 gcc test.c -o test -lpcap -lnetfilter_queue -luv  
 iptables -F  
 iptables -X  
-iptables -N NFQUEUE_CHAIN  
-  
-iptables -A NFQUEUE_CHAIN -p tcp --sport 80 -j NFQUEUE --queue-num 0  
-iptables -A NFQUEUE_CHAIN -p tcp --sport 443 -j NFQUEUE --queue-num 0  
-iptables -I INPUT 1 -j NFQUEUE_CHAIN  
-iptables -I OUTPUT 1 -j NFQUEUE_CHAIN  
+/usr/sbin/iptables -I OUTPUT -p tcp --sport 80 -j NFQUEUE --queue-num 0
+/usr/sbin/iptables -I OUTPUT -p tcp --sport 443 -j NFQUEUE --queue-num 0
 ./test  
 
 
